@@ -1,4 +1,5 @@
-import { authRefreshMiddleware, backupData, backupSpecificData } from "../services";
+// pages/api/aps/backup.js
+import { backupData, backupSpecificData, getHubs } from '../services'; // Ensure these imports are correct
 import { PassThrough } from 'stream';
 
 function sanitizeName(name) {
@@ -6,35 +7,46 @@ function sanitizeName(name) {
 }
 
 export default async function handler(req, res) {
-    await new Promise((resolve, reject) => {
-        authRefreshMiddleware(req, res, (err) => {
-            if (err) reject(err);
-            else resolve();
-        });
-    });
+    const { access_token } = req.cookies;
+
+    if (!access_token) {
+        return res.status(401).json({ error: 'Unauthorized' });
+    }
+
     try {
-        const accessToken = req.internalOAuthToken.access_token;
         const passThrough = new PassThrough();
 
         res.setHeader('Content-Disposition', 'attachment; filename=backup.zip');
         res.setHeader('Content-Type', 'application/zip');
 
-        if (req.query.hub_id && req.query.project_id) {
-            const hubs = await getHubs(accessToken);
-            const hub = hubs.find(h => h.id === req.query.hub_id);
-            const hubName = hub ? hub.attributes.name : 'backup';
-            const sanitizedHubName = sanitizeName(hubName);
+        passThrough.on('error', (err) => {
+            console.error('Stream error:', err);
+            res.status(500).send('Stream encountered an error.');
+        });
 
-            // Directly stream the ZIP for the specific hub and project
-            await backupSpecificData(req, passThrough, accessToken, req.query.hub_id, req.query.project_id);
+        // Backup Logic
+        if (req.query.hub_id && req.query.project_id) {
+            console.log(req.query.hub_id, req.query.project_id);
+            
+            // Backup a specific project
+            const hubs = await getHubs(access_token);
+            const hub = hubs.find(h => h.id === req.query.hub_id);
+
+            if (!hub) {
+                return res.status(404).json({ error: 'Hub not found' });
+            }
+
+            const sanitizedHubName = sanitizeName(hub.attributes.name);
+            await backupSpecificData(req, passThrough, access_token, req.query.hub_id, req.query.project_id);
         } else {
-            // Directly stream the ZIP for all hubs and projects
-            await backupData(req, passThrough, accessToken);
+            // Backup all projects
+            await backupData(req, passThrough, access_token);
         }
-        
+
         passThrough.pipe(res).on('finish', () => {
             console.log('Backup process completed successfully.');
         });
+
     } catch (err) {
         console.error('Error during backup process:', err);
         res.status(500).send('Backup process encountered an error.');
