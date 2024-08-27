@@ -1,4 +1,5 @@
 import React, { useEffect, useState, useCallback, useRef } from "react";
+import { useRouter } from 'next/router';
 import InspireTree from "inspire-tree";
 import InspireTreeDOM from "inspire-tree-dom";
 import "inspire-tree-dom/dist/inspire-tree-light.min.css";
@@ -7,8 +8,6 @@ const Home = () => {
   const [token, setToken] = useState(null);
   const [userName, setUserName] = useState(null);
   const [urn, setUrn] = useState("");
-  // const [hubList, setHubList] = useState([])
-  // const [projectList, setProjectList] = useState([])
   const [isOpen, setIsOpen] = useState(false);
   const [loading, setLoading] = useState(false);
   const viewerContainerRef = useRef(null);
@@ -17,59 +16,82 @@ const Home = () => {
   const [projects, setProjects] = useState([]);
   const [selectedHub, setSelectedHub] = useState("");
   const [selectedProject, setSelectedProject] = useState("");
-  const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState(null);
+  const [isBackupAllLoading, setIsBackupAllLoading] = useState(false);
+  const [isBackupSelectedLoading, setIsBackupSelectedLoading] = useState(false);
+  const [isAuthenticated, setIsAuthenticated] = useState(false); // Add authentication status state
 
   useEffect(() => {
-    const fetchHubs = async () => {
+    // Check if the user is authenticated by inspecting the cookie or session
+    const checkAuthentication = async () => {
       try {
-        const response = await fetch("/api/hubs");
-        if (response.ok) {
-          const hubsData = await response.json();
-          setHubs(hubsData);
-          if (hubsData.length > 0) {
-            const firstHubId = hubsData[0].id;
-            setSelectedHub(firstHubId);
-            fetchProjects(firstHubId);
-          }
+        const res = await fetch('/api/auth/check');
+        if (res.ok) {
+          setIsAuthenticated(true); // Set authentication status
         } else {
-          console.error("Failed to fetch hubs");
+          setIsAuthenticated(false);
         }
-      } catch (err) {
-        console.error("Error fetching hubs:", err);
+      } catch (error) {
+        console.error('Error checking authentication:', error);
+        setIsAuthenticated(false);
       }
     };
 
-    fetchHubs();
+    checkAuthentication();
   }, []);
+
+  useEffect(() => {
+    if (isAuthenticated) {
+      const fetchHubs = async () => {
+        try {
+          const response = await fetch("/api/hubs");
+          if (response.ok) {
+            const hubsData = await response.json();
+            setHubs(hubsData);
+          } else {
+            console.error("Failed to fetch hubs");
+          }
+        } catch (err) {
+          console.error("Error fetching hubs:", err);
+        }
+      };
+
+      fetchHubs();
+    }
+  }, [isAuthenticated]);
 
   const fetchProjects = async (hubId) => {
     try {
       const response = await fetch(`/api/hubs/${hubId}/projects`);
       if (response.ok) {
         const projectsData = await response.json();
-        console.log(projectsData);
-        
         setProjects(projectsData);
-        setSelectedProject(projectsData[0]?.id)
+        setSelectedProject(""); // Reset selected project
       } else {
         console.error("Failed to fetch projects");
+        setProjects([]); // Ensure projects are cleared on failure
       }
     } catch (err) {
       console.error("Error fetching projects:", err);
+      setProjects([]); // Ensure projects are cleared on error
     }
   };
-  
-  const handleHubChange = (event) => {
+
+  const handleHubChange = async (event) => {
     const hubId = event.target.value;
     setSelectedHub(hubId);
-    fetchProjects(hubId);
+    setProjects([]); // Clear projects before fetching new ones
+    setSelectedProject(""); // Reset selected project
+
+    if (hubId) {
+      await fetchProjects(hubId);
+    }
   };
 
   const handleProjectChange = (event) => {
     const projectId = event.target.value;
     console.log("projectId", projectId);
-    
+
     setSelectedProject(projectId);
   };
 
@@ -84,6 +106,7 @@ const Home = () => {
     if (viewer) {
       setViewer(null);
     }
+    setIsAuthenticated(false); // Set authentication status to false
     window.location.reload();
   };
 
@@ -109,6 +132,7 @@ const Home = () => {
       setUserName(null);
     }
   };
+
   useEffect(() => {
     if (token) {
       fetchUserProfile();
@@ -117,7 +141,7 @@ const Home = () => {
     }
   }, [token]);
 
-  const getAccessToken = useCallback(async (callback) => {
+  const getAccessToken = async (callback) => {
     try {
       const resp = await fetch("/api/auth/token");
       if (!resp.ok) throw new Error(await resp.text());
@@ -126,7 +150,7 @@ const Home = () => {
     } catch (err) {
       console.error("Error fetching access token:", err);
     }
-  }, []);
+  };
 
   const initViewer = async (container) => {
     return new Promise((resolve) => {
@@ -164,7 +188,6 @@ const Home = () => {
   };
 
   const encodedUrn = (urn) => {
-    // const baseUrn = urn.split('?')[0];
     const refinedUrn = btoa(unescape(encodeURIComponent(urn)));
     return refinedUrn;
   };
@@ -179,7 +202,7 @@ const Home = () => {
     if (token) {
       initializeViewer();
     } else if (viewer) {
-      viewer.tearDDown();
+      viewer.tearDown();
       setViewer(null);
     }
   }, [token]);
@@ -240,7 +263,6 @@ const Home = () => {
       )
     );
   };
-  // console.log(hubList, projectList);
 
   const getContents = async (hubId, projectId, folderId = null) => {
     const contents = await getJSON(
@@ -348,14 +370,14 @@ const Home = () => {
     } catch (err) {
       setError(err.message);
     } finally {
-      setIsLoading(false);
+      setIsBackupSelectedLoading(false);
     }
     
   }
 
   const handleBackupAll = async () => {
     
-    setIsLoading(true);
+    setIsBackupAllLoading(true);
     setError(null);
 
     try {
@@ -386,66 +408,42 @@ const Home = () => {
     } catch (err) {
       setError(err.message);
     } finally {
-      setIsLoading(false);
+      setIsBackupAllLoading(false);
     }
   };
 
-  return (
-    <div className="flex flex-col h-screen overflow-hidden">
-      {loading && <Spinner />}
-      <div className="flex items-center justify-between h-14 w-full bg-white shadow-md px-4">
-        <img
-          className="h-8"
-          src="https://cdn.autodesk.io/logo/black/stacked.png"
-          alt="Autodesk Platform Services"
-        />
-        <span className="font-bold text-lg">Hubs Browser</span>
-        <div className="flex items-center space-x-4">
-          {/* <button className="btn">BackUp All</button> */}
+  if (!isAuthenticated) {
+    return (
+      <div className="flex flex-col h-screen w-full justify-center items-center gap-8">
+        {/* <button onClick={handleLoginClick}>Login</button> */}
+        <div>
+          <img
+            className="h-24 object-contain"
+            src="https://d1nw187rmwcpt3.cloudfront.net/usam_logo-removebg-preview.webp"
+            alt="Autodesk Platform Services"
+          />
+        </div>
+        <div>
           <button
-            className="btn"
-            onClick={handleBackupAll}
-            disabled={isLoading}
+            className="border-2 border-neutral-900 rounded-md bg-gray-800 text-white font-semibold xl:text-xl w-full px-24 py-1 flex justify-center lg:text-sm md:text-sm"
+            id="login"
+            onClick={handleLoginClick}
           >
-            {isLoading ? "Backing up..." : "BackUp All"}
+            Login
           </button>
-          {error && <p className="error">{error}</p>}
-          <select
-            id="hub-select"
-            className="select"
-            value={selectedHub}
-            onChange={handleHubChange}
-          >
-            {hubs.map((hub) => (
-              <option key={hub.id} value={hub.id}>
-                {hub.attributes.name}
-              </option>
-            ))}
-          </select>
-
-          <select id="project-select" className="select" value={selectedProject} onChange={handleProjectChange}>
-            {projects.map((project) => (
-              <option key={project.id} value={project.id}>
-                {project.attributes.name}
-              </option>
-            ))}
-          </select>
-          {/* <select id="hub-select" className="select"></select>
-          <select id="project-select" className="select"></select> */}
-          <button className="btn" onClick={handlebackupSelected}>BackUp Selected</button>
-          {!userName ? (
-            <button id="login" onClick={handleLoginClick}>
-              Login
-            </button>
-          ) : (
-            <button id="logout" onClick={handleLogoutClick}>
-              {userName}
-            </button>
-          )}
         </div>
       </div>
-      <div className="flex flex-1 h-full">
+    );
+  }
+
+
+  return (
+    <div className="flex flex-col h-screen overflow-hidden  ">
+      {loading && <Spinner />}
+
+      <div className="flex flex-1 h-full sm:hidden xs:hidden md:flex">
         <div className="w-1/4 h-full overflow-y-scroll bg-gray-900 text-white overflow-x-auto">
+        <div className="font-semibold text-lg py-3 flex justify-center">HUBS BROWSER</div>
           <div id="tree" className="m-4"></div>
         </div>
         <div className="w-3/4 h-auto relative">
@@ -454,7 +452,214 @@ const Home = () => {
             style={{ width: "100%", height: "100%" }}
           />
         </div>
+        {/* ================= */}
+        <div className="2xl:w-[18%] flex flex-col xl:w-[22%] lg:w-[23%] md:w-[30%]">
+          <div className="sm:hidden xs:hidden md:flex xl:w-[95%] xl:mx-auto p-6 flex flex-col justify-start items-center lg:w-[95%] md:w-full md:p-4">
+            <img
+              className="h-24 object-contain"
+              src="https://d1nw187rmwcpt3.cloudfront.net/usam_logo-removebg-preview.webp"
+              alt="Autodesk Platform Services"
+            />
+            <div className="flex w-max">
+              {!userName ? (
+                <button
+                  className="border-2 px-20 border-neutral-900 rounded-md bg-gray-800 text-white font-semibold xl:text-lg w-full lg:text-sm md:text-sm"
+                  id="login"
+                  onClick={handleLoginClick}
+                >
+                  Login
+                </button>
+              ) : (
+                <button
+                  className="border-2 border-neutral-900 p-1 rounded-md bg-gray-800 text-white font-semibold text-lg w-full lg:text-lg md:text-sm"
+                  id="logout"
+                  onClick={handleLogoutClick}
+                >
+                  Logout ({userName})
+                </button>
+              )}
+            </div>
+          </div>
+          <div className="flex flex-col h-full ">
+          <div className=" xl:w-[95%] mt-24 xl:mx-auto p-6 flex flex-col justify-center items-center gap-2 lg:w-[95%] md:w-full md:p-4">
+            <div className="text-xl font-sans font-semibold xl:text-xl lg:text-lg md:text-lg">
+              Backup All
+            </div>
+            <button
+              className="border-2 border-neutral-900 p-1 rounded-md bg-gray-800 text-white font-semibold text-md w-full lg:text-sm md:text-sm"
+              onClick={handleBackupAll}
+              disabled={isBackupAllLoading}
+            >
+              {isBackupAllLoading ? "Backing up..." : "DOWNLOAD "}
+            </button>
+            {error && <p className="error">{error}</p>}
+          </div>
+          <div className=" xl:w-[95%] mx-auto p-6 flex flex-col justify-start items-center gap-2 lg:w-[95%] md:w-full md:p-4">
+            <div className="text-xl font-sans font-semibold xl:text-xl lg:text-lg md:text-lg">
+              Backup Selected
+            </div>
+            <div className="w-full">
+              <select
+                id="hub-select"
+                className="select border-2 border-neutral-900 w-full p-1 rounded-lg lg:font-medium md:text-base md:font-medium"
+                value={selectedHub || ""}
+                onChange={handleHubChange}
+              >
+                <option value="" disabled>
+                  Select Hub
+                </option>
+                {hubs.map((hub) => (
+                  <option key={hub.id} value={hub.id}>
+                    {hub.attributes.name}
+                  </option>
+                ))}
+              </select>
+            </div>
+
+            <div className="w-full">
+              {selectedHub && (
+                <select
+                  id="project-select"
+                  className="select border-2 border-neutral-900 w-full p-1 rounded-lg font-medium"
+                  value={selectedProject || ""}
+                  onChange={handleProjectChange}
+                >
+                  <option value="" disabled>
+                    Select Project
+                  </option>
+                  {projects.length > 0 ? (
+                    projects.map((project) => (
+                      <option key={project.id} value={project.id}>
+                        {project.attributes.name}
+                      </option>
+                    ))
+                  ) : (
+                    <option value="" disabled>
+                      No projects available
+                    </option>
+                  )}
+                </select>
+              )}
+            </div>
+            <button
+              className="border-2 border-neutral-900 p-1 rounded-md bg-gray-800 text-white font-medium text-md w-full lg:text-sm md:text-sm"
+              onClick={handlebackupSelected}
+              disabled={isBackupSelectedLoading}
+            >
+              {isBackupSelectedLoading ? "Backing up..." : "DOWNLOAD"}
+            </button>
+          </div>
+          </div>
+        </div>
       </div>
+      {/* ===================== sm xs ========================= */}
+      <div className="sm:flex flex-1 h-full md:hidden xs:flex">
+        <div className="w-2/3 h-full overflow-y-scroll bg-gray-900 text-white overflow-x-auto">
+        <div className="font-semibold text-lg py-3 flex justify-center">HUBS BROWSER</div>
+          <div id="tree" className="m-4"></div>
+        </div>
+        {/* ================= */}
+        <div className="2xl:w-[18%] flex flex-col xl:w-[22%] lg:w-[23%] md:w-[30%]">
+          <div className="sm:hidden xs:hidden md:flex xl:w-[95%] xl:mx-auto p-6 flex flex-col justify-start items-center lg:w-[95%] md:w-full md:p-4">
+            <img
+              className="h-24 object-contain"
+              src="https://d1nw187rmwcpt3.cloudfront.net/usam_logo-removebg-preview.webp"
+              alt="Autodesk Platform Services"
+            />
+            <div className="flex w-max">
+              {!userName ? (
+                <button
+                  className="border-2 px-20 border-neutral-900 rounded-md bg-gray-800 text-white font-semibold xl:text-lg w-full lg:text-sm md:text-sm"
+                  id="login"
+                  onClick={handleLoginClick}
+                >
+                  Login
+                </button>
+              ) : (
+                <button
+                  className="border-2 border-neutral-900 p-1 rounded-md bg-gray-800 text-white font-semibold text-lg w-full lg:text-lg md:text-sm"
+                  id="logout"
+                  onClick={handleLogoutClick}
+                >
+                  Logout ({userName})
+                </button>
+              )}
+            </div>
+          </div>
+          <div className="flex flex-col h-full ">
+          <div className=" xl:w-[95%] mt-24 xl:mx-auto p-6 flex flex-col justify-center items-center gap-2 lg:w-[95%] md:w-full md:p-4">
+            <div className="text-xl font-sans font-semibold xl:text-xl lg:text-lg md:text-lg">
+              Backup All
+            </div>
+            <button
+              className="border-2 border-neutral-900 p-1 rounded-md bg-gray-800 text-white font-semibold text-md w-full lg:text-sm md:text-sm"
+              onClick={handleBackupAll}
+              disabled={isBackupAllLoading}
+            >
+              {isBackupAllLoading ? "Backing up..." : "DOWNLOAD "}
+            </button>
+            {error && <p className="error">{error}</p>}
+          </div>
+          <div className=" xl:w-[95%] mx-auto p-6 flex flex-col justify-start items-center gap-2 lg:w-[95%] md:w-full md:p-4">
+            <div className="text-xl font-sans font-semibold xl:text-xl lg:text-lg md:text-lg">
+              Backup Selected
+            </div>
+            <div className="w-full">
+              <select
+                id="hub-select"
+                className="select border-2 border-neutral-900 w-full p-1 rounded-lg lg:font-medium md:text-base md:font-medium"
+                value={selectedHub || ""}
+                onChange={handleHubChange}
+              >
+                <option value="" disabled>
+                  Select Hub
+                </option>
+                {hubs.map((hub) => (
+                  <option key={hub.id} value={hub.id}>
+                    {hub.attributes.name}
+                  </option>
+                ))}
+              </select>
+            </div>
+
+            <div className="w-full">
+              {selectedHub && (
+                <select
+                  id="project-select"
+                  className="select border-2 border-neutral-900 w-full p-1 rounded-lg font-medium"
+                  value={selectedProject || ""}
+                  onChange={handleProjectChange}
+                >
+                  <option value="" disabled>
+                    Select Project
+                  </option>
+                  {projects.length > 0 ? (
+                    projects.map((project) => (
+                      <option key={project.id} value={project.id}>
+                        {project.attributes.name}
+                      </option>
+                    ))
+                  ) : (
+                    <option value="" disabled>
+                      No projects available
+                    </option>
+                  )}
+                </select>
+              )}
+            </div>
+            <button
+              className="border-2 border-neutral-900 p-1 rounded-md bg-gray-800 text-white font-medium text-md w-full lg:text-sm md:text-sm"
+              onClick={handlebackupSelected}
+              disabled={isBackupSelectedLoading}
+            >
+              {isBackupSelectedLoading ? "Backing up..." : "DOWNLOAD"}
+            </button>
+          </div>
+          </div>
+        </div>
+      </div>
+      {/* ======================== sm xs ===================== */}
+      
     </div>
   );
 };
